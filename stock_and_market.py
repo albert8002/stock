@@ -170,12 +170,11 @@ class MarketReferences:
         return correlation_coefficient, kullback_leibler_divergence, mutual_info, dtw_distance
 
 # Example usage:
-'''if __name__ == "__main__":
+if __name__ == "__main__":
     print("Comparing AAPL to S&P 500 (SPY) from 2023-01-01 to 2023-12-31")
     market_ref = MarketReferences()
-    correlation, kl_divergence, mutual_info, dtw_distance = market_ref.compare_to_market("AAPL", "2023-01-01", "2023-12-31")
+    correlation, kl_divergence, mutual_info, dtw_distance = market_ref.compare_to_market("AAPL", "2023-01-01", "2023-03-30", timeframe=TimeFrame(59, TimeFrameUnit.Minute))
     print(f"Correlation Coefficient: {correlation}")
     print(f"Kullback-Leibler Divergence: {kl_divergence}")
     print(f"Mutual Information: {mutual_info}")
     print(f"Dynamic Time Warping Distance: {dtw_distance}")
-'''
