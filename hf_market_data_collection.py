@@ -10,22 +10,6 @@ FIVE_MINUTE_INTERVALS_PER_YEAR = (
     TRADING_DAYS_PER_YEAR * FIVE_MINUTE_INTERVALS_PER_DAY
 )
 
-
-def get_volatility(ticker: str, date: date, num_days_back: int):
-    start_date = date - timedelta(days=num_days_back)
-    r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json")
-    r.raise_for_status()
-    response_data = r.json()
-    data = response_data["data"]
-    sessions = _get_regular_session_returns(data)
-    returns = [r_t for session in sessions for r_t in session]
-    if len(returns) < 2:
-        raise ValueError("At least two regular-session returns are required")
-
-    std_dev_5m = statistics.stdev(returns)
-    return std_dev_5m * math.sqrt(FIVE_MINUTE_INTERVALS_PER_YEAR)
-
-
 def _get_regular_session_returns(data):
     session_bars = {}
     session_open = datetime.strptime("09:30", "%H:%M").time()
@@ -50,6 +34,23 @@ def _get_regular_session_returns(data):
             sessions.append(returns)
 
     return sessions
+
+
+def get_volatility(ticker: str, date: date, num_days_back: int):
+    start_date = date - timedelta(days=num_days_back)
+    r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json")
+    r.raise_for_status()
+    response_data = r.json()
+    data = response_data["data"]
+    sessions = _get_regular_session_returns(data)
+    returns = [r_t for session in sessions for r_t in session]
+    if len(returns) < 2:
+        raise ValueError("At least two regular-session returns are required")
+
+    std_dev_5m = statistics.stdev(returns)
+    return std_dev_5m * math.sqrt(FIVE_MINUTE_INTERVALS_PER_YEAR)
+
+
 
 def get_daily_return(ticker: str, date: date):
     r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=1day&start={date.isoformat()}&order=asc&format=json&limit=1")
