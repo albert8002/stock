@@ -4,15 +4,14 @@ This trading bot predicts future volatility and then use gamma scalping to profi
 
 ## Model Features
 
-- Past volatility (multiple ranges)
-- Returns
+- ✅Past volatility (multiple ranges)
+- ✅Returns
+- ✅Trading volume
+- Stock features (momentum, entropy, correlation with market, etc)
+- Market features (return, volatility, momentum, entropy)
+- Implied volatility from option pricing
 - Days until / since major stock event (earnings call, dividend, etc)
 - Days until / since major market event (jobs numbers, inflation, etc)
 - News sentiment -> number of articles, number of new articles in timeframe
-- Implied volatility from option pricing
-- Stock features (momentum, entropy, correlation with market, etc)
-- Market features (return, volatility, momentum, entropy)
-- Open interest
-- Trading volume
 - Interest rate
 - Calendar (day of the week, etc)
