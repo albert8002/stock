@@ -532,18 +532,24 @@ def add_lags(panel: pd.DataFrame, columns=None, lags=(1, 5, 21), diffs=True) -> 
     Vol levels are persistent and non-stationary; the changes usually carry
     more signal than the levels do.
     """
-    out = panel.copy()
     if columns is None:
         columns = [c for c in panel.columns if c.startswith(("atm_iv_", "skew_", "term_slope_"))]
 
+    # Accumulate then concat once; assigning column by column fragments the
+    # frame and pandas warns about it on wide panels.
+    new: dict[str, pd.Series] = {}
     for col in columns:
         if col not in panel.columns:
             continue
         for lag in lags:
-            out[f"{col}_lag{lag}"] = panel[col].shift(lag)
+            shifted = panel[col].shift(lag)
+            new[f"{col}_lag{lag}"] = shifted
             if diffs:
-                out[f"{col}_chg{lag}"] = panel[col] - panel[col].shift(lag)
-    return out
+                new[f"{col}_chg{lag}"] = panel[col] - shifted
+
+    if not new:
+        return panel.copy()
+    return pd.concat([panel, pd.DataFrame(new, index=panel.index)], axis=1)
 
 
 def add_rolling_z(panel: pd.DataFrame, columns=None, window: int = 63, min_periods: int = 20):
@@ -553,17 +559,20 @@ def add_rolling_z(panel: pd.DataFrame, columns=None, window: int = 63, min_perio
     Deliberately not a full-sample standardization: fitting a scaler on the
     whole panel leaks future distribution information into training rows.
     """
-    out = panel.copy()
     if columns is None:
         columns = [c for c in panel.columns if c.startswith(("atm_iv_", "skew_", "rr", "bf"))]
 
+    new: dict[str, pd.Series] = {}
     for col in columns:
         if col not in panel.columns:
             continue
         roll = panel[col].shift(1).rolling(window, min_periods=min_periods)
         mu, sd = roll.mean(), roll.std()
-        out[f"{col}_z{window}"] = (panel[col] - mu) / sd.replace(0, np.nan)
-    return out
+        new[f"{col}_z{window}"] = (panel[col] - mu) / sd.replace(0, np.nan)
+
+    if not new:
+        return panel.copy()
+    return pd.concat([panel, pd.DataFrame(new, index=panel.index)], axis=1)
 
 
 def add_targets(

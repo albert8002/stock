@@ -4,3 +4,4 @@ scipy
 pandas
 python-dotenv
 requests
+matplotlib
