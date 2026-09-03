@@ -1,1 +1,6 @@
- requests
+alpaca-py
+numpy
+scipy
+pandas
+python-dotenv
+requests
