@@ -1,8 +1,15 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 import math
 import statistics
 
 import requests
+
+TRADING_DAYS_PER_YEAR = 252
+FIVE_MINUTE_INTERVALS_PER_DAY = 78
+FIVE_MINUTE_INTERVALS_PER_YEAR = (
+    TRADING_DAYS_PER_YEAR * FIVE_MINUTE_INTERVALS_PER_DAY
+)
+
 
 def get_volatility(ticker: str, date: date, num_days_back: int):
     start_date = date - timedelta(days=num_days_back)
@@ -10,22 +17,48 @@ def get_volatility(ticker: str, date: date, num_days_back: int):
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
-    returns = []
-    for i in range(0, len(data)-1):
-        r_t = math.log(data[i+1]["close"]/data[i]["close"])
-        returns.append(r_t)
+    sessions = _get_regular_session_returns(data)
+    returns = [r_t for session in sessions for r_t in session]
+    if len(returns) < 2:
+        raise ValueError("At least two regular-session returns are required")
 
-    if len(returns) == 0:
-        return 0.0
+    std_dev_5m = statistics.stdev(returns)
+    return std_dev_5m * math.sqrt(FIVE_MINUTE_INTERVALS_PER_YEAR)
 
-    std_dev_5m = statistics.pstdev(returns)
-    return std_dev_5m * math.sqrt(19656)
+
+def _get_regular_session_returns(data):
+    session_bars = {}
+    session_open = datetime.strptime("09:30", "%H:%M").time()
+    session_close = datetime.strptime("16:00", "%H:%M").time()
+
+    for bar in data:
+        timestamp = datetime.fromisoformat(bar["datetime"])
+        if session_open <= timestamp.time() <= session_close:
+            session_bars.setdefault(timestamp.date(), []).append((timestamp, bar))
+
+    sessions = []
+    for bars in session_bars.values():
+        bars.sort(key=lambda item: item[0])
+        returns = []
+        for (previous_time, previous_bar), (current_time, current_bar) in zip(
+            bars, bars[1:]
+        ):
+            if current_time - previous_time != timedelta(minutes=5):
+                continue
+            returns.append(math.log(current_bar["close"] / previous_bar["close"]))
+        if returns:
+            sessions.append(returns)
+
+    return sessions
 
 def get_daily_return(ticker: str, date: date):
     r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=1day&start={date.isoformat()}&order=asc&format=json&limit=1")
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
+    if not data:
+        raise ValueError(f"No daily data returned for {ticker}")
+
     return math.log(data[0]["close"]/data[0]["open"])
 
 def get_cum_return(ticker: str, date: date, num_days_back: int):
@@ -34,6 +67,9 @@ def get_cum_return(ticker: str, date: date, num_days_back: int):
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
+    if not data:
+        raise ValueError(f"No intraday data returned for {ticker}")
+
     return math.log(data[-1]["close"]/data[0]["open"])
 
 def get_trading_volume(ticker: str, date: date):
@@ -41,25 +77,31 @@ def get_trading_volume(ticker: str, date: date):
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
+    if not data:
+        raise ValueError(f"No daily data returned for {ticker}")
+
     return data[0]["volume"]
 
-def get_volatility_of_volatility(ticker: str, date: date, num_days_back: int, window_size_5min: int):
+def get_volatility_of_volatility(ticker: str, date: date, num_days_back: int, num_5min_windows: int):
+    if num_5min_windows < 2:
+        raise ValueError("num_5min_windows must be at least 2")
+
     start_date = date - timedelta(days=num_days_back)
     r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json")
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
-    returns = []
-    for i in range(0, len(data)-1):
-        r_t = math.log(data[i+1]["close"]/data[i]["close"])
-        returns.append(r_t)
+    std_devs = []
 
-    if len(returns) == 0:
-        return 0.0
+    for session in _get_regular_session_returns(data):
+        for start in range(0, len(session) - num_5min_windows + 1, num_5min_windows):
+            window = session[start:start + num_5min_windows]
+            std_dev_5m = statistics.stdev(window)
+            std_devs.append(std_dev_5m * math.sqrt(FIVE_MINUTE_INTERVALS_PER_YEAR))
 
-    std_dev_5m = statistics.pstdev(returns)
-    return std_dev_5m * math.sqrt(19656)
-# print(get_past_volatility("AAPL", date.today() - timedelta(days=365 * 2), 4))
-# print(get_daily_return("AAPL", date.today() - timedelta(days=31)))
+    if len(std_devs) < 2:
+        raise ValueError(
+            "At least two complete regular-session windows are required"
+        )
 
-print(get_trading_volume("AAPL", date.today() - timedelta(days=31)))
+    return statistics.stdev(std_devs)
