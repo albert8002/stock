@@ -20,16 +20,17 @@ class StockData:
             self.secret_key
         )
 
-    def get_hourly_data(
+    def get_price_data(
         self,
         symbol: str,
         start: str,
         end: str,
+        timeframe: TimeFrame = TimeFrame(5, TimeFrameUnit.Minute),
     ) -> pd.Series:
 
         request = StockBarsRequest(
             symbol_or_symbols=symbol,
-            timeframe=TimeFrame(1, TimeFrameUnit.Hour),
+            timeframe=timeframe,
             start=start,
             end=end,
         )
@@ -150,10 +151,16 @@ class MarketReferences:
             self.secret_key
         )
 
-    def compare_to_market(self, symbol: str, start: str, end: str) -> float:
+    def compare_to_market(
+        self,
+        symbol: str,
+        start: str,
+        end: str,
+        timeframe: TimeFrame = TimeFrame(5, TimeFrameUnit.Minute),
+    ) -> float:
         stock_data = StockData(self.api_key, self.secret_key)
-        stock_prices = stock_data.get_hourly_data(symbol, start, end)
-        market_prices = stock_data.get_hourly_data("SPY", start, end)  # Using SPY as a proxy for S&P 500
+        stock_prices = stock_data.get_price_data(symbol, start, end, timeframe=timeframe)
+        market_prices = stock_data.get_price_data("SPY", start, end, timeframe=timeframe)  # Using SPY as a proxy for S&P 500
         stock_prices, market_prices = stock_data.align_price_series(stock_prices, market_prices)
 
         correlation_coefficient = stock_data.calculate_corelation_coefficient(stock_prices, market_prices)
