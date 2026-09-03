@@ -4,5 +4,6 @@ scipy
 pandas
 python-dotenv
 requests
+matplotlib
 beautifulsoup4
 icalendar
