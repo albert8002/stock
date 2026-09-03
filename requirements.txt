@@ -4,3 +4,5 @@ scipy
 pandas
 python-dotenv
 requests
+beautifulsoup4
+icalendar
