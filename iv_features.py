@@ -45,6 +45,7 @@ Design notes
 from __future__ import annotations
 
 import math
+import sys
 import warnings
 from dataclasses import dataclass
 
@@ -62,6 +63,19 @@ DEFAULT_MONEYNESS = (-0.20, -0.10, -0.05, 0.0, 0.05, 0.10, 0.20)
 
 # Deltas for risk-reversal / butterfly features.
 DEFAULT_DELTAS = (0.10, 0.25)
+
+VERBOSE = False
+
+
+def set_verbose(flag: bool = True) -> None:
+    """Trace feature extraction stages to stderr."""
+    global VERBOSE
+    VERBOSE = flag
+
+
+def _log(msg: str, indent: int = 0) -> None:
+    if VERBOSE:
+        print(f"    {'  '*indent}{msg}", file=sys.stderr, flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -301,7 +315,13 @@ class FeatureBuilder:
                 kind=self.fit_kind,
             )
 
-        return {t: f for t, f in fits.items() if f.kind != "failed"}
+        good = {t: f for t, f in fits.items() if f.kind != "failed"}
+        if VERBOSE:
+            _log(f"fit {len(good)}/{len(fits)} expiry slices ({self.fit_kind}):")
+            for t, f in sorted(good.items()):
+                _log(f"{t*365.25:6.0f}d  {f.kind:<9} n={f.n_points:<3} "
+                     f"rmse={f.rmse:.4f}  k in [{f.k_min:+.3f}, {f.k_max:+.3f}]", 1)
+        return good
 
     # -- tenor interpolation ----------------------------------------------
 
@@ -338,6 +358,7 @@ class FeatureBuilder:
 
     def snapshot(self, surface, timestamp=None) -> pd.Series:
         """Feature vector for one surface. Index is fixed by configuration."""
+        _log(f"snapshot: {len(surface.points)} points -> features")
         feats: dict[str, float] = {}
         fits = self.fit_slices(surface)
         tenor_years = {d: d / 365.25 for d in self.tenors}
@@ -439,6 +460,15 @@ class FeatureBuilder:
 
         ts = timestamp if timestamp is not None else _surface_timestamp(surface)
         series.name = ts
+
+        if VERBOSE:
+            n_ok = int(series.notna().sum())
+            _log(f"{len(series)} features, {n_ok} populated, "
+                 f"{len(series)-n_ok} NaN (outside coverage)")
+            for d in self.tenors:
+                v = series.get(f"atm_iv_{d}d")
+                mark = f"{v:.4f}" if np.isfinite(v) else "-- (no coverage)"
+                _log(f"atm_iv_{d}d = {mark}", 1)
         return series
 
     def feature_names(self) -> list[str]:

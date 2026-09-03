@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import pickle
+import sys
 import time
 from pathlib import Path
 
@@ -84,6 +85,7 @@ def collect_surfaces(
     end: str,
     cache_dir: str | Path = "cache",
     pause: float = 0.35,
+    verbose: bool = True,
     **kwargs,
 ) -> list:
     """
@@ -91,34 +93,62 @@ def collect_surfaces(
 
     Days with no trades, or that raise, are skipped rather than aborting the
     run -- a single bad day should not cost you a whole backfill.
+
+    This is the slow step: each day pages the full contract chain and then
+    pulls trades for every contract, so expect tens of seconds per day and
+    plan a long backfill accordingly. Progress prints to stderr.
     """
     cache = Path(cache_dir)
     cache.mkdir(parents=True, exist_ok=True)
 
     iv = IVSurface()
     surfaces, failures = [], []
+    days = trading_days(start, end)
+    t0 = time.time()
 
-    for day in trading_days(start, end):
+    if verbose:
+        print(f"building {len(days)} days of {symbol} surfaces -> {cache}/", file=sys.stderr)
+
+    for i, day in enumerate(days, 1):
         path = cache / f"{symbol}_{day:%Y-%m-%d}.pkl"
 
         if path.exists():
             with open(path, "rb") as fh:
                 surfaces.append(pickle.load(fh))
-            continue
+            status = "cached"
+        else:
+            try:
+                surf = one_day_surface(iv, symbol, day, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - keep the loop alive
+                failures.append((day.date(), str(exc)[:80]))
+                status = "SKIP"
+                surf = None
+            else:
+                with open(path, "wb") as fh:
+                    pickle.dump(surf, fh)
+                surfaces.append(surf)
+                status = f"{len(surf.points)} pts"
+                time.sleep(pause)  # stay under the API rate limit
 
-        try:
-            surf = one_day_surface(iv, symbol, day, **kwargs)
-        except Exception as exc:  # noqa: BLE001 - keep the loop alive
-            failures.append((day.date(), str(exc)[:80]))
-            continue
+        if verbose:
+            elapsed = time.time() - t0
+            rate = elapsed / i
+            eta = rate * (len(days) - i)
+            print(
+                f"  [{i}/{len(days)}] {day:%Y-%m-%d}  {status:>10}  "
+                f"elapsed {elapsed/60:.1f}m  eta {eta/60:.1f}m",
+                file=sys.stderr,
+                flush=True,
+            )
 
-        with open(path, "wb") as fh:
-            pickle.dump(surf, fh)
-        surfaces.append(surf)
-        time.sleep(pause)  # stay under the API rate limit
-
+    if verbose:
+        print(
+            f"done: {len(surfaces)} surfaces, {len(failures)} skipped, "
+            f"{(time.time()-t0)/60:.1f} minutes",
+            file=sys.stderr,
+        )
     if failures:
-        print(f"skipped {len(failures)} days, first few: {failures[:3]}")
+        print(f"skipped days, first few: {failures[:3]}", file=sys.stderr)
     return surfaces
 
 
@@ -149,13 +179,19 @@ def make_dataset(
     horizons=(1, 5, 21),
     lags=(1, 5, 21),
     cache_dir: str = "cache",
+    verbose: bool = True,
     **kwargs,
 ) -> pd.DataFrame:
     """
     The whole pipeline. Returns a model-ready DataFrame indexed by timestamp,
     with feature columns plus ``y_*`` target columns.
+
+    Note this RETURNS the frame rather than printing it -- assign it and then
+    print, or set verbose=True (the default) for a summary on stderr.
     """
-    surfaces = collect_surfaces(symbol, start, end, cache_dir=cache_dir, **kwargs)
+    surfaces = collect_surfaces(
+        symbol, start, end, cache_dir=cache_dir, verbose=verbose, **kwargs
+    )
     if not surfaces:
         raise RuntimeError("no surfaces built -- check credentials, dates, and status filter")
 
@@ -168,7 +204,44 @@ def make_dataset(
 
     panel = add_lags(panel, lags=lags)
     panel = add_targets(panel, spot, horizons=horizons)
-    return clean_for_model(panel)
+    out = clean_for_model(panel)
+
+    if verbose:
+        feat = [c for c in out.columns if not c.startswith(("y_", "symbol"))]
+        targ = [c for c in out.columns if c.startswith("y_")]
+        print(
+            f"dataset: {out.shape[0]} rows x {len(feat)} features + {len(targ)} targets\n"
+            f"  range: {out.index.min()} .. {out.index.max()}",
+            file=sys.stderr,
+        )
+    return out
+
+
+def smoke_test(symbol: str = "AAPL", day: str = "2024-06-03", **kwargs) -> None:
+    """
+    Pull ONE day and report what came back. Run this before a long backfill --
+    it isolates credential, date and status-filter problems in seconds rather
+    than after an hour of silent looping.
+
+        python -c "import make_dataset as m; m.smoke_test('AAPL','2024-06-03')"
+    """
+    iv = IVSurface()
+    d = pd.Timestamp(day, tz="UTC")
+    print(f"pulling {symbol} for {d:%Y-%m-%d} ...", file=sys.stderr, flush=True)
+
+    t0 = time.time()
+    surf = one_day_surface(iv, symbol, d, **kwargs)
+    secs = time.time() - t0
+
+    print(f"  {secs:.1f}s   {surf}")
+    print(f"  trades={surf.meta['n_trades']}  solve_rate={surf.meta['solve_rate']:.1%}")
+    print(f"  expiries={surf.points['expiration'].nunique()}  points={len(surf.points)}")
+
+    row = FeatureBuilder().snapshot(surf)
+    print(f"  features={len(row)}  non-null={row.notna().sum()}")
+    for c in ["atm_iv_30d", "atm_iv_90d", "skew_30d", "term_slope_30_90"]:
+        print(f"    {c:20} {row[c]:.4f}")
+    print(f"\n  at ~{secs:.0f}s/day a 1-year backfill takes ~{secs*252/60:.0f} minutes")
 
 
 if __name__ == "__main__":

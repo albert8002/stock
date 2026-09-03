@@ -36,6 +36,9 @@ Quick start
 from __future__ import annotations
 
 import math
+import sys
+import time
+from datetime import datetime
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -46,11 +49,41 @@ from scipy.stats import norm
 from alpaca.data.historical import StockHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest
 from alpaca.data.timeframe import TimeFrame
+from alpaca.data.requests import OptionTradesRequest
 
 from option_data import OptionsData
 
 SECONDS_PER_YEAR = 365.25 * 24 * 3600
 MARKET_TZ = "America/New_York"
+
+# ---------------------------------------------------------------------------
+# Progress tracing
+# ---------------------------------------------------------------------------
+# Set VERBOSE = True (or pass verbose=True to build) to print every stage as it
+# runs. Output goes to stderr so it never contaminates piped stdout data.
+
+VERBOSE = False
+_T0 = None
+
+
+def set_verbose(flag: bool = True) -> None:
+    """Turn stage tracing on or off globally."""
+    global VERBOSE
+    VERBOSE = flag
+
+
+def _log(msg: str, indent: int = 0) -> None:
+    if not VERBOSE:
+        return
+    global _T0
+    if _T0 is None:
+        _T0 = time.time()
+    print(f"  [{time.time()-_T0:6.1f}s] {'  '*indent}{msg}", file=sys.stderr, flush=True)
+
+
+def _reset_clock() -> None:
+    global _T0
+    _T0 = time.time()
 
 
 # ---------------------------------------------------------------------------
@@ -390,6 +423,94 @@ class IVSurface(OptionsData):
         super().__init__(api_key, secret_key)
         self.stock_client = StockHistoricalDataClient(self.api_key, self.secret_key)
 
+    # -- step 0: contracts + trades, with progress ---------------------------
+
+    def get_trades(
+        self,
+        underlying: str,
+        start,
+        end,
+        expiration_start,
+        expiration_end,
+        option_type=None,
+        strike_min: float | None = None,
+        strike_max: float | None = None,
+        status=None,
+    ) -> pd.DataFrame:
+        """
+        Same contract as the inherited version, but prints progress per symbol
+        batch. This is the slow step -- a wide chain is hundreds of contracts,
+        fetched 100 at a time with pagination inside each batch -- so without
+        tracing it looks like a hang.
+        """
+        if isinstance(start, str):
+            start = datetime.fromisoformat(start)
+        if isinstance(end, str):
+            end = datetime.fromisoformat(end)
+
+        _log("fetching option contracts ...", 1)
+        contracts = self.get_contracts(
+            underlying=underlying,
+            expiration_start=expiration_start,
+            expiration_end=expiration_end,
+            option_type=option_type,
+            strike_min=strike_min,
+            strike_max=strike_max,
+            status=status,
+        )
+        _log(f"contracts: {len(contracts)}", 2)
+
+        if contracts.empty:
+            _log("no contracts matched -- check status filter (active vs inactive)", 2)
+            return pd.DataFrame()
+
+        symbols = contracts["option_symbol"].tolist()
+        n_batches = (len(symbols) + 99) // 100
+        _log(f"fetching trades in {n_batches} batches of 100 ...", 1)
+
+        all_trades = []
+        for bi, i in enumerate(range(0, len(symbols), 100), 1):
+            symbol_batch = symbols[i : i + 100]
+            page_token = None
+            batch_rows = 0
+
+            while True:
+                request = OptionTradesRequest(
+                    symbol_or_symbols=symbol_batch,
+                    start=start,
+                    end=end,
+                    limit=1000,
+                    page_token=page_token,
+                )
+                response = self.data_client.get_option_trades(request)
+                df = response.df
+
+                if not df.empty:
+                    all_trades.append(df)
+                    batch_rows += len(df)
+
+                page_token = getattr(response, "next_page_token", None)
+                if not page_token:
+                    break
+
+            _log(f"batch {bi}/{n_batches}: {batch_rows} trades", 2)
+
+        if not all_trades:
+            _log("no trades in window", 2)
+            return pd.DataFrame()
+
+        trades = pd.concat(all_trades).reset_index()
+        _log(f"total trades: {len(trades)}", 2)
+
+        trades = trades.merge(
+            contracts, left_on="symbol", right_on="option_symbol", how="left"
+        )
+
+        if "timestamp" in trades.columns:
+            trades = trades.sort_values(["timestamp", "symbol"]).reset_index(drop=True)
+
+        return trades
+
     # -- step 1: underlying price at each option trade ----------------------
 
     def attach_spot(
@@ -408,6 +529,7 @@ class IVSurface(OptionsData):
         if trades.empty:
             return trades
 
+        _log("attaching underlying spot prices ...", 1)
         bars = self.stock_client.get_stock_bars(
             StockBarsRequest(
                 symbol_or_symbols=underlying,
@@ -425,13 +547,17 @@ class IVSurface(OptionsData):
         trades = trades.copy()
         trades["timestamp"] = pd.to_datetime(trades["timestamp"], utc=True)
 
-        return pd.merge_asof(
+        merged = pd.merge_asof(
             trades.sort_values("timestamp"),
             bars.sort_values("timestamp"),
             on="timestamp",
             direction="backward",
             tolerance=pd.Timedelta(tolerance),
         )
+        matched = merged["spot"].notna().sum()
+        _log(f"bars: {len(bars)}, matched {matched}/{len(merged)} trades "
+             f"({matched/max(len(merged),1):.0%})", 2)
+        return merged
 
     # -- step 2: per-trade implied vol --------------------------------------
 
@@ -447,6 +573,7 @@ class IVSurface(OptionsData):
         if trades.empty:
             return trades
 
+        _log(f"solving implied vol for {len(trades)} trades ({model}) ...", 1)
         df = trades.copy()
 
         exp = pd.to_datetime(df["expiration"])
@@ -468,7 +595,12 @@ class IVSurface(OptionsData):
             )
         ]
 
+        solved = int(df["iv"].notna().sum())
+        _log(f"solved {solved}/{len(df)} ({solved/max(len(df),1):.0%}); "
+             f"unsolved are zero-vega or off-bound prints", 2)
+
         if with_greeks:
+            _log("computing greeks ...", 2)
             greeks = [
                 bs_greeks(s, k, t, r, q, v, c) if np.isfinite(v) else
                 dict(delta=np.nan, gamma=np.nan, vega=np.nan, theta=np.nan, rho=np.nan)
@@ -499,6 +631,8 @@ class IVSurface(OptionsData):
         if trades.empty:
             return trades
 
+        _log("aggregating trades into surface points ...", 1)
+        n_in = len(trades)
         df = trades.dropna(subset=["iv"])
         df = df[df["iv"].between(*iv_bounds)]
         df = df[df["tenor_days"] >= min_tenor_days]
@@ -531,6 +665,8 @@ class IVSurface(OptionsData):
         grouped["iv"] = grouped["iv_sum"] / grouped["w_sum"]
 
         grouped = grouped[grouped["n_trades"] >= min_trades]
+        _log(f"kept {len(df)}/{n_in} trades after filters -> "
+             f"{len(grouped)} contract points", 2)
         return grouped.drop(columns=["iv_sum", "w_sum"]).sort_values(
             ["tenor_days", "strike"]
         ).reset_index(drop=True)
@@ -554,6 +690,7 @@ class IVSurface(OptionsData):
         min_trades: int = 1,
         moneyness_bounds: tuple[float, float] = (0.7, 1.3),
         with_greeks: bool = False,
+        verbose: bool | None = None,
     ) -> Surface:
         """
         Pull contracts + trades, attach spot, solve for IV, aggregate.
@@ -562,6 +699,11 @@ class IVSurface(OptionsData):
         single-name equity options; ``"bsm"`` is fine for index options.
         Past dates need ``status="inactive"`` to pick up expired contracts.
         """
+        if verbose is not None:
+            set_verbose(verbose)
+        _reset_clock()
+
+        _log(f"[1/4] {underlying} contracts + trades  {start} .. {end}")
         trades = self.get_trades(
             underlying=underlying,
             start=start,
@@ -574,16 +716,26 @@ class IVSurface(OptionsData):
             status=status,
         )
         if trades.empty:
+            _log("STOP: no trades -- nothing to build")
             raise ValueError("no option trades returned for the requested window")
 
+        _log("[2/4] underlying spot")
         trades = self.attach_spot(trades, underlying, start, end)
+
+        _log("[3/4] implied volatility")
         trades = self.compute_iv(trades, r=r, q=q, model=model, with_greeks=with_greeks)
+
+        _log("[4/4] aggregate")
         points = self.aggregate(
             trades, min_trades=min_trades, moneyness_bounds=moneyness_bounds
         )
 
         spot_ref = float(trades["spot"].dropna().iloc[-1]) if trades["spot"].notna().any() else np.nan
         solved = int(trades["iv"].notna().sum())
+
+        _log(f"DONE: {len(points)} points, "
+             f"{points['expiration'].nunique() if len(points) else 0} expiries, "
+             f"spot {spot_ref:.2f}")
 
         return Surface(
             points=points,
