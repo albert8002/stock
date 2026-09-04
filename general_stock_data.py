@@ -10,6 +10,11 @@ FIVE_MINUTE_INTERVALS_PER_YEAR = (
     TRADING_DAYS_PER_YEAR * FIVE_MINUTE_INTERVALS_PER_DAY
 )
 
+def _get_url(url: str, ticker: str) -> str:
+    if ticker in ["SPX", "SPY"]:
+        url = url.replace("stock", "index")
+    return url
+
 def _get_regular_session_returns(data):
     session_bars = {}
     session_open = datetime.strptime("09:30", "%H:%M").time()
@@ -44,7 +49,7 @@ def get_volatility(ticker: str, date: date, num_days_back: int):
 
         while start_date.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
             start_date -= timedelta(days=1)
-    r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json")
+    r = requests.get(_get_url(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json", ticker))
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
@@ -59,7 +64,7 @@ def get_volatility(ticker: str, date: date, num_days_back: int):
 
 
 def get_daily_return(ticker: str, date: date):
-    r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=1day&start={date.isoformat()}&order=asc&format=json&limit=1")
+    r = requests.get(_get_url(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=1day&start={date.isoformat()}&order=asc&format=json&limit=1", ticker))
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
@@ -76,7 +81,7 @@ def get_cum_return(ticker: str, date: date, num_days_back: int):
 
         while start_date.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
             start_date -= timedelta(days=1)
-    r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json")
+    r = requests.get(_get_url(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json", ticker))
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
@@ -86,7 +91,7 @@ def get_cum_return(ticker: str, date: date, num_days_back: int):
     return math.log(data[-1]["close"]/data[0]["open"])
 
 def get_trading_volume(ticker: str, date: date):
-    r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=1day&start={date.isoformat()}&order=asc&format=json&limit=1")
+    r = requests.get(_get_url(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=1day&start={date.isoformat()}&order=asc&format=json&limit=1", ticker))
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
@@ -106,7 +111,7 @@ def get_volatility_of_volatility(ticker: str, date: date, num_days_back: int, nu
 
         while start_date.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
             start_date -= timedelta(days=1)
-    r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json")
+    r = requests.get(_get_url(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json", ticker))
     r.raise_for_status()
     response_data = r.json()
     data = response_data["data"]
@@ -124,3 +129,4 @@ def get_volatility_of_volatility(ticker: str, date: date, num_days_back: int, nu
         )
 
     return statistics.stdev(std_devs)
+
