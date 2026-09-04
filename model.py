@@ -4,6 +4,12 @@ import torch.optim as optim
 from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 from datetime import datetime, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
+EASTERN = ZoneInfo("America/New_York")
+
+date = datetime(2024, 5, 31, 16, 0, tzinfo=EASTERN)
 
 from features_and_labels import get_labels, get_features
 
