@@ -3,7 +3,7 @@ import logging
 import requests
 from typing import Dict, Any, List, Optional
 from dotenv import load_dotenv
-
+import numpy as np
 # Load environment variables from .env file
 load_dotenv()
 
@@ -32,6 +32,10 @@ class AlphaVantageSentimentExtractor:
             raise ValueError(
                 "API Key not found. Please pass an api_key or set ALPHA_VANTAGE_API_KEY in your .env file.")
 
+    def timeconvert(self, time_str: str) -> str:
+        "converts yyyy-mm-dd to yyyymmddT0000"
+        return time_str.replace("-", "") + "T0000"
+
     def fetch_sentiment_features(
             self,
             ticker: str,
@@ -39,7 +43,8 @@ class AlphaVantageSentimentExtractor:
             end_time: str,
             limit: int = 1000
     ) -> Dict[str, Any]:
-
+        start_time = self.timeconvert(start_time)
+        end_time = self.timeconvert(end_time)
         params = {
             "function": "NEWS_SENTIMENT",
             "tickers": ticker,
@@ -121,7 +126,16 @@ class AlphaVantageSentimentExtractor:
             neg = features["negative_articles"]
             features["net_sentiment_ratio"] = round((pos - neg) / total, 4)
 
-        return features
+        output_array = np.array([
+            features["total_relevant_articles"],
+            features["positive_articles"],
+            features["negative_articles"],
+            features["neutral_articles"],
+            features["avg_relevance_score"],
+            features["avg_sentiment_score"],
+            features["net_sentiment_ratio"]
+        ])
+        return output_array
 
 
 # Example usage

@@ -37,7 +37,13 @@ def _get_regular_session_returns(data):
 
 
 def get_volatility(ticker: str, date: date, num_days_back: int):
-    start_date = date - timedelta(days=num_days_back)
+    start_date = date
+
+    for _ in range(num_days_back):
+        start_date -= timedelta(days=1)
+
+        while start_date.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+            start_date -= timedelta(days=1)
     r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json")
     r.raise_for_status()
     response_data = r.json()
@@ -63,7 +69,13 @@ def get_daily_return(ticker: str, date: date):
     return math.log(data[0]["close"]/data[0]["open"])
 
 def get_cum_return(ticker: str, date: date, num_days_back: int):
-    start_date = date - timedelta(days=num_days_back)
+    start_date = date
+
+    for _ in range(num_days_back):
+        start_date -= timedelta(days=1)
+
+        while start_date.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+            start_date -= timedelta(days=1)
     r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json")
     r.raise_for_status()
     response_data = r.json()
@@ -87,7 +99,13 @@ def get_volatility_of_volatility(ticker: str, date: date, num_days_back: int, nu
     if num_5min_windows < 2:
         raise ValueError("num_5min_windows must be at least 2")
 
-    start_date = date - timedelta(days=num_days_back)
+    start_date = date
+
+    for _ in range(num_days_back):
+        start_date -= timedelta(days=1)
+
+        while start_date.weekday() >= 5:  # 5 = Saturday, 6 = Sunday
+            start_date -= timedelta(days=1)
     r = requests.get(f"https://www.hfmarketdata.io/v1/bars/stock/{ticker}?timeframe=5min&start={start_date.isoformat()}&end={date}&order=asc&format=json")
     r.raise_for_status()
     response_data = r.json()

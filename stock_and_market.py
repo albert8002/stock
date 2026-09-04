@@ -25,7 +25,7 @@ class StockData:
         symbol: str,
         start: str,
         end: str,
-        timeframe: TimeFrame = TimeFrame(5, TimeFrameUnit.Minute),
+        timeframe: TimeFrame = TimeFrame(30, TimeFrameUnit.Minute),
     ) -> pd.Series:
 
         request = StockBarsRequest(
@@ -40,7 +40,7 @@ class StockData:
         df = response.df
 
         if df.empty:
-            return pd.Series(dtype=float)
+            return []
 
         # Keep closes indexed by timestamp for reliable alignment.
         prices = df["close"]
@@ -48,10 +48,10 @@ class StockData:
             prices.index = prices.index.get_level_values(-1)
         prices = prices.sort_index()
 
-        return prices
+        return prices.tolist()
 
     def align_price_series(self, x: pd.Series, y: pd.Series) -> tuple[np.ndarray, np.ndarray]:
-        aligned = pd.concat([x, y], axis=1, join="inner").dropna()
+        aligned = pd.concat([pd.Series(x), pd.Series(y)], axis=1, join="inner").dropna()
         if aligned.empty:
             return np.array([]), np.array([])
         return aligned.iloc[:, 0].to_numpy(), aligned.iloc[:, 1].to_numpy()
@@ -166,15 +166,15 @@ class MarketReferences:
         correlation_coefficient = stock_data.calculate_corelation_coefficient(stock_prices, market_prices)
         kullback_leibler_divergence = stock_data.calculate_kullback_leibler_divergence(stock_prices, market_prices)
         mutual_info = stock_data.calculate_mutual_information(stock_prices, market_prices)
-        dtw_distance = stock_data.calculate_dynamic_time_warping_distance(stock_prices, market_prices)
-        return correlation_coefficient, kullback_leibler_divergence, mutual_info, dtw_distance
+
+        return correlation_coefficient, kullback_leibler_divergence, mutual_info
 
 # Example usage:
 if __name__ == "__main__":
     print("Comparing AAPL to S&P 500 (SPY) from 2023-01-01 to 2023-12-31")
     market_ref = MarketReferences()
-    correlation, kl_divergence, mutual_info, dtw_distance = market_ref.compare_to_market("AAPL", "2023-01-01", "2023-03-30", timeframe=TimeFrame(59, TimeFrameUnit.Minute))
+    correlation, kl_divergence, mutual_info = market_ref.compare_to_market("AAPL", "2023-01-01", "2023-03-30", timeframe=TimeFrame(59, TimeFrameUnit.Minute))
     print(f"Correlation Coefficient: {correlation}")
     print(f"Kullback-Leibler Divergence: {kl_divergence}")
     print(f"Mutual Information: {mutual_info}")
-    print(f"Dynamic Time Warping Distance: {dtw_distance}")
+
